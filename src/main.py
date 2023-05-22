@@ -1,117 +1,219 @@
-from fileinput import filename
 import cv2 as cv
-from cv2 import blur
 import numpy as np
 
-import sys
+def find_red_objects(image):
+    # Convertendo a imagem para o espaço de cores HSV
+    hsv_image = cv.cvtColor(image, cv.COLOR_BGR2HSV)
 
-scale = 1
-delta = 0
-ddepth = cv.CV_16S
+    # Definindo os limites inferior e superior para detecção de vermelho
+    lower_red = np.array([0, 50, 50])  # Matiz mínimo, saturação mínima e valor mínimo
+    upper_red = np.array([10, 255, 255])  # Matiz máximo, saturação máxima e valor máximo
 
-#  pegando o path da imagem para ler com o imread
-path= r'C:\Users\Caio Peixoto\Documents\GitHub\PDI\Dataset\1.jpg'
+    # Criando uma máscara para pixels na faixa de cores vermelhas
+    mask = cv.inRange(hsv_image, lower_red, upper_red)
 
-# lendo a imagem
-imgRGB = cv.imread(path)
+    # Aplicando a máscara à imagem original
+    red_objects = cv.bitwise_and(image, image, mask=mask)
 
-imgRGBs = cv.resize(imgRGB, (940, 540))
+    # Aplicando a função bwareaopen para remover objetos pequenos
+    gray_image = cv.cvtColor(red_objects, cv.COLOR_BGR2GRAY)
+    _, threshold = cv.threshold(gray_image, 1, 255, cv.THRESH_BINARY)
+    filtered_objects = cv.bitwise_and(red_objects, red_objects, mask=threshold)
+
+    return filtered_objects
+
+# Carregando a imagem
+img = cv.imread(cv.samples.findFile("Dataset/nickr.jpg"))
+
+# Resize in case of a image being too big.
+imgRGB = cv.resize(img, (940, 540))
 
 # Alplicando borramento Gaussiano para eliminar ruídos
-img_borrada= cv.GaussianBlur(imgRGBs,(5,5),0)
+img_borrada= cv.GaussianBlur(imgRGB,(5,5),0)
 
-# convertendo de rgb para hsv
-imgHSV = cv.cvtColor(img_borrada, cv.COLOR_RGB2HSV)
+# Chamando a função para encontrar os objetos vermelhos
+red_objects = find_red_objects(img_borrada)
 
-# Valor do Limite inferior para cor vermelha
-lower1 = np.array([0, 100, 20])
-upper1 = np.array([10, 255, 255])
+def detect_edges(image):
+    # Convertendo a imagem para tons de cinza
+    gray_image = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
 
-# Valor do limite superior para cor vermelha
-lower2 = np.array([115, 100, 20]) 
-upper2 = np.array([179, 255, 255])
- 
-# Aplicando mascara na imagem com a função cv.inRange() 
-# que é semelhante a bwareaopen() utilizada no artigo
+    # Aplicando o filtro de Sobel para detecção de bordas
+    sobel_x = cv.Sobel(gray_image, cv.CV_64F, 1, 0, ksize=3)
+    sobel_y = cv.Sobel(gray_image, cv.CV_64F, 0, 1, ksize=3)
 
-lower_mask = cv.inRange(imgHSV, lower1, upper1)
-upper_mask = cv.inRange(imgHSV, lower2, upper2) 
+    # Calculando a magnitude dos gradientes
+    gradient_magnitude = np.sqrt(sobel_x ** 2 + sobel_y ** 2)
 
-mask = lower_mask + upper_mask
+    # Normalizando a magnitude dos gradientes para o intervalo [0, 255]
+    gradient_magnitude_normalized = cv.normalize(gradient_magnitude, None, 0, 255, cv.NORM_MINMAX, dtype=cv.CV_8U)
 
-# Encontrar os contornos 
-contours, _ = cv.findContours(mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+    # Aplicando uma limiarização para binarizar a imagem das bordas
+    _, edges = cv.threshold(gradient_magnitude_normalized, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU)
 
-# Criar uma máscara em branco do mesmo tamanho da imagem
-mask_preenchida = np.zeros_like(mask)
+    return edges
 
-# Preencher os contornos na máscara
-cv.drawContours(mask_preenchida, contours, -1, 255, thickness=cv.FILLED)
+# Chamando a função para detectar as bordas na imagem segmentada
+edges = detect_edges(red_objects)
 
+def dilate_edges(edges):
+    # Definindo o kernel para a dilatação
+    kernel = np.ones((3, 3), np.uint8)
 
-grad_x = cv.Sobel(mask_preenchida, ddepth, 1, 0, ksize=3, scale=scale, delta=delta, borderType=cv.BORDER_DEFAULT)
+    # Realizando a dilatação nas bordas
+    dilated_edges = cv.dilate(edges, kernel, iterations=1)
 
-# Gradient-Y
-# grad_y = cv.Scharr(gray,ddepth,0,1)
-grad_y = cv.Sobel(mask_preenchida, ddepth, 0, 1, ksize=3, scale=scale, delta=delta, borderType=cv.BORDER_DEFAULT)
+    return dilated_edges
 
+# Chamando a função para realizar a dilatação nas bordas
+dilated_edges = dilate_edges(edges)
 
-abs_grad_x = cv.convertScaleAbs(grad_x)
-abs_grad_y = cv.convertScaleAbs(grad_y)
+def fill_objects(edges):
+    # Copiando a imagem das bordas para preservar a original
+    filled_image = edges.copy()
 
-# grad vai mostrar somente as bordas da mascara
-grad = cv.addWeighted(abs_grad_x, 1, abs_grad_y, 1, 0)
+    # Encontrando os contornos dos objetos nas bordas
+    contours, _ = cv.findContours(filled_image, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
 
-######################################################################################################################
-# Tentar entender melhor como aplicar a tranformada de hough
-# Definir o kernel para a erosão
-kernel = np.ones((3, 3), np.uint8)  # Exemplo de um kernel 3x3
+    # Preenchendo os objetos conectados
+    for contour in contours:
+        cv.drawContours(filled_image, [contour], 0, (255), -1)
 
-# Aplicar a erosão
-eroded_image = cv.erode(mask_preenchida, kernel, iterations=1)
+    return filled_image
 
-# discover image contours
-contours, _= cv.findContours(image=eroded_image, mode=cv.RETR_TREE, method=cv.CHAIN_APPROX_NONE)
+# Chamando a função para preencher o interior dos objetos conectados
+filled_image = fill_objects(dilated_edges)
 
-edges = cv.Canny(eroded_image, 50, 150)
+def remove_border_objects(image):
+    # Encontrando os contornos dos objetos na imagem
+    contours, _ = cv.findContours(image, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
 
-# Aplicar a Transformada de Hough para detectar linhas
-lines = cv.HoughLines(edges, 1, np.pi/180, 200)
+    # Encontrando as dimensões da imagem
+    height, width = image.shape[:2]
 
-# Ordenar as linhas com base no número de votos (votos em ordem decrescente)
-if lines is not None:
-    lines = sorted(lines, key=lambda x: -x[0][0])
+    # Definindo uma região de interesse (ROI) com base nas bordas
+    roi = np.zeros_like(image)
+    cv.rectangle(roi, (0, 0), (width - 1, height - 1), 255, -1)
 
-    # Selecionar as 8 melhores linhas
-    selected_lines = lines[:8]
+    # Verificando quais objetos estão em contato com a ROI
+    for contour in contours:
+        x, y, w, h = cv.boundingRect(contour)
+        if cv.pointPolygonTest(contour, (x, y), False) == 1.0:
+            cv.drawContours(image, [contour], 0, 0, -1)
 
-    # Desenhar as linhas selecionadas na imagem original
-    for line in selected_lines:
-        rho, theta = line[0]
-        a = np.cos(theta)
-        b = np.sin(theta)
-        x0 = a * rho
-        y0 = b * rho
-        x1 = int(x0 + 1000 * (-b))
-        y1 = int(y0 + 1000 * (a))
-        x2 = int(x0 - 1000 * (-b))
-        y2 = int(y0 - 1000 * (a))
-        cv.line(imgRGB, (x1, y1), (x2, y2), (0, 0, 255), 2)
-######################################################################################################################
-# Exibir a imagem original com as linhas detectadas
-cv.imshow('Detected Lines', imgRGB)
+    return image
 
-# Exibir imagem erodida
-# cv.imshow('Eroded Image', eroded_image)
+# Chamando a função para remover objetos conectados em contato com as bordas
+processed_image = remove_border_objects(filled_image)
 
-# Exibir a imagem resultante
-# cv.imshow('Imagem Preenchida', mask_preenchida)
-# cv.imshow('Contornos', grad)
+def improve_object_definition(image):
+    # Definindo o kernel para a erosão
+    kernel = np.ones((3, 3), np.uint8)
 
-# # mostrando imagem
-# cv.imshow('Imagem Original',imgRGB)
-# cv.imshow('Imagem Gaussiano', img_borrada)
-# cv.imshow('full-mask',mask)
+    # Realizando a erosão na imagem
+    eroded_image = cv.erode(image, kernel, iterations=1)
 
+    return eroded_image
+
+# Chamando a função para melhorar a definição do objeto detectado
+improved_image = improve_object_definition(processed_image)
+
+def detect_lines(image):
+    # Aplicando o detector de bordas Canny
+    edges = cv.Canny(image, 50, 150)
+    
+    # Aplicando a transformada de Hough para encontrar as retas principais
+    lines = cv.HoughLinesP(edges, 1, np.pi/180, threshold=50, minLineLength=50, maxLineGap=10)
+   
+    # Selecionando as oito melhores linhas
+    if lines is not None:
+        lines = lines[:8]
+
+    # Unindo linhas próximas
+    merged_lines = merge_lines(lines, max_distance=5)
+    
+    return merged_lines
+
+def merge_lines(lines, max_distance):
+    merged_lines = []
+
+    for line in lines:
+        x1, y1, x2, y2 = line[0]
+
+        # Calculando o ponto médio da linha
+        mid_point = ((x1 + x2) // 2, (y1 + y2) // 2)
+
+        # Verificando se o ponto médio está próximo de alguma linha já existente
+        merge_flag = False
+        for merged_line in merged_lines:
+            existing_mid_point = ((merged_line[0][0] + merged_line[1][0]) // 2, (merged_line[0][1] + merged_line[1][1]) // 2)
+
+            # Verificando a distância entre os pontos médios
+            distance = np.sqrt((mid_point[0] - existing_mid_point[0]) ** 2 + (mid_point[1] - existing_mid_point[1]) ** 2)
+            if distance <= max_distance:
+                # Atualizando a linha existente com os novos pontos
+                merged_line[0] = (min(merged_line[0][0], x1), min(merged_line[0][1], y1))
+                merged_line[1] = (max(merged_line[1][0], x2), max(merged_line[1][1], y2))
+                merge_flag = True
+                break
+
+        # Se não houver linha próxima, adicionamos uma nova linha
+        if not merge_flag:
+            merged_lines.append([(x1, y1), (x2, y2)])
+
+    return merged_lines
+
+def draw_lines(image, lines):
+    line_color = (0, 255, 255)  # Amarelo
+
+    for line in lines:
+        start_point = line[0]
+        end_point = line[1]
+
+        # Desenhando a linha
+        cv.line(image, start_point, end_point, line_color, thickness=2)
+
+        # Desenhando os pontos de início e fim da linha
+        cv.circle(image, start_point, radius=3, color=(0, 0, 255), thickness=-1)  # Vermelho
+        cv.circle(image, end_point, radius=3, color=(0, 0, 255), thickness=-1)  # Vermelho
+
+    return image
+
+def draw_bounding_rectangle(image, lines):
+    top_left = (image.shape[1], image.shape[0])
+    bottom_right = (0, 0)
+
+    for line in lines:
+        start_point = line[0]
+        end_point = line[1]
+
+        # Atualizando as coordenadas do retângulo delimitador
+        top_left = (min(top_left[0], start_point[0]), min(top_left[1], start_point[1]))
+        top_left = (min(top_left[0], end_point[0]), min(top_left[1], end_point[1]))
+        bottom_right = (max(bottom_right[0], start_point[0]), max(bottom_right[1], start_point[1]))
+        bottom_right = (max(bottom_right[0], end_point[0]), max(bottom_right[1], end_point[1]))
+
+    # Desenhando o retângulo delimitador
+    cv.rectangle(image, top_left, bottom_right, color=(0, 255, 0), thickness=2)
+
+    return image
+
+# Detectando as linhas na improved_image
+lines = detect_lines(improved_image)
+
+# Desenhando as linhas na imagem original
+image_with_lines = draw_lines(imgRGB.copy(), lines)
+
+# Desenhando o retângulo delimitador
+image_with_rectangle = draw_bounding_rectangle(image_with_lines, lines)
+
+# Exibindo a imagem com as retas e o retângulo delimitador
+cv.imshow('Objetos Vermelhos', red_objects)
+cv.imshow('Imagem Original com Retas e Retângulo', image_with_rectangle)
+cv.imshow('Imagem com Definicao Melhorada', improved_image)
+# cv.imshow('Imagem Processada', processed_image)
+# cv.imshow('Objetos Preenchidos', filled_image)
+# cv.imshow('Bordas', edges)
+# cv.imshow('Bordas Dilatadas', dilated_edges)
 cv.waitKey(0)
-cv.destroyAllWindows
+cv.destroyAllWindows()
