@@ -23,7 +23,7 @@ def find_red_objects(image):
     return filtered_objects
 
 # Carregando a imagem
-img = cv.imread(cv.samples.findFile("Dataset/nickr.jpg"))
+img = cv.imread(cv.samples.findFile("Dataset/10.jpg"))
 
 # Resize in case of a image being too big.
 imgRGB = cv.resize(img, (940, 540))
@@ -210,7 +210,7 @@ image_with_rectangle = draw_bounding_rectangle(image_with_lines, lines)
 # Exibindo a imagem com as retas e o retângulo delimitador
 cv.imshow('Objetos Vermelhos', red_objects)
 cv.imshow('Imagem Original com Retas e Retângulo', image_with_rectangle)
-cv.imshow('Imagem com Definicao Melhorada', improved_image)
+# cv.imshow('Imagem com Definicao Melhorada', improved_image)
 # cv.imshow('Imagem Processada', processed_image)
 # cv.imshow('Objetos Preenchidos', filled_image)
 # cv.imshow('Bordas', edges)
